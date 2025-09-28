@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 
 const SOURCES = [
   { url: "https://www.pcgamer.com/games/fps/borderlands-4-shift-codes/", name: "PC Gamer", type: "table", priority: 1 },
-  { url: "https://www.gamespot.com/articles/borderlands-4-shift-codes-all-active-keys-and-how-to-redeem-them/1100-6533833/", name: "GameSpot", type: "gamespot", priority: 2 },
+  // Dropped GameSpot due to unreliable regex matching
   { url: "https://www.gamesradar.com/games/borderlands/borderlands-4-shift-codes-golden-keys/", name: "GamesRadar", type: "gamesradar", priority: 2 },
   { url: "https://mentalmars.com/game-news/borderlands-4-shift-codes/", name: "MentalMars", type: "table", priority: 2 },
   { url: "https://www.pcgamesn.com/borderlands-4/shift-codes", name: "PCGamesN", type: "pcgamesn", priority: 2 },
@@ -16,40 +16,26 @@ const codeRegex = /\b[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}
 const SPECIAL_CODES = {
   "JS63J-JSCWJ-CFTBW-3TJ3J-WJS5R": {
     reward: "Break Free Cosmetic Pack",
-    expires: "2030-12-31T23:59:00-06:00", // Long-term code
+    expires: "2030-12-31T23:59:00-06:00",
     source: "https://www.pcgamer.com/games/fps/borderlands-4-shift-codes/"
   }
 };
 
 // Site-specific extraction functions
 const siteExtractors = {
-  gamespot: (html, code) => {
-    const lines = html.split(/[\r\n]+/);
-    for (const line of lines) {
-      if (line.includes(code)) {
-        // GameSpot format: CODE - x1 Golden Key (NEW)
-        const rewardMatch = line.match(/- (x?\d*\s*.*?)(?:\s*\(|$)/i);
-        const reward = rewardMatch ? rewardMatch[1].trim() : "1x Golden Key";
-        const isNew = line.includes("(NEW)");
-        return { reward, expires: isNew ? null : null, raw: line.trim() };
-      }
-    }
-    return { reward: "1x Golden Key", expires: null, raw: "" };
-  },
-
   gamesradar: (html, code) => {
     const lines = html.split(/[\r\n]+/);
     for (const line of lines) {
       if (line.includes(code)) {
         // GamesRadar format: CODE (1 Golden Key) — added Sept. 27
         const rewardMatch = line.match(/\(([^)]+)\)/);
-        const reward = rewardMatch ? rewardMatch[1] : "1 Golden Key";
+        const reward = rewardMatch ? rewardMatch[1] : "1x Golden Key";
         const dateMatch = line.match(/added\s+([\w\s,]+)/i);
         const dateStr = dateMatch ? dateMatch[1] : null;
         return { reward, expires: parseGamesRadarDate(dateStr), raw: line.trim() };
       }
     }
-    return { reward: "1 Golden Key", expires: null, raw: "" };
+    return { reward: "1x Golden Key", expires: null, raw: "" };
   },
 
   pcgamesn: (html, code) => {
@@ -85,27 +71,22 @@ const siteExtractors = {
   table: (html, code) => {
     // For PC Gamer and MentalMars table formats
     const codeIndex = html.indexOf(code);
-    const windowSize = 1200;
+    const windowSize = 1000;
     const start = Math.max(0, codeIndex - windowSize);
     const end = Math.min(html.length, codeIndex + windowSize);
     const window = html.slice(start, end);
     
-    // Enhanced patterns for PC Gamer table structure
+    // Look for table structure patterns
     const tablePatterns = [
-      // Full month names with years
       /(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}/gi,
-      // Abbreviated months
       /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+\d{4}/gi,
-      // Numeric dates
       /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g,
-      // Special indicators that mean "active"
       /(NEW|Unlisted|Permanent)/gi
     ];
     
     let bestDate = null;
     let closestDistance = Infinity;
     
-    // Look for dates in the window around the code
     for (const pattern of tablePatterns) {
       let match;
       while ((match = pattern.exec(window)) !== null) {
@@ -117,14 +98,13 @@ const siteExtractors = {
       }
     }
     
-    // Enhanced reward detection
+    // Extract reward from table context
     const rewardPatterns = [
+      /(Break Free[^,\n\r]{0,50})/gi,
       /(\d+x?\s*Golden Keys?)/gi,
       /(\d+x?\s*Vault Hunter Skin[^,\n\r]{0,30})/gi,
-      /(Break Free[^,\n\r]{0,50})/gi,
       /(Ripper Shield)/gi,
       /(\d+x?\s*ECHO-4[^,\n\r]{0,30})/gi,
-      /(Legendary[^,\n\r]{0,30})/gi,
     ];
     
     let reward = "1x Golden Key";
@@ -157,9 +137,8 @@ function parseGamesRadarDate(dateStr) {
 function parseStandardDate(dateStr) {
   if (!dateStr) return null;
   
-  // Handle special cases that indicate active codes
   if (/NEW|Unlisted|Permanent/i.test(dateStr)) {
-    return null; // No expiration
+    return null;
   }
   
   try {
@@ -184,41 +163,42 @@ async function fetchText(url) {
 }
 
 async function main() {
-  const pcGamerCodes = new Set(); // Track codes found on PC Gamer
-  const allEntries = new Map();
+  const pcGamerCodes = new Map(); // PC Gamer codes (authoritative)
+  const otherSiteCodes = new Map(); // Track codes from other sites with count
+  const finalEntries = new Map();
   
-  // First, process PC Gamer (priority source)
+  // Step 1: Process PC Gamer (authoritative source)
   const pcGamerSource = SOURCES.find(s => s.name === "PC Gamer");
   if (pcGamerSource) {
     try {
-      console.log(`Fetching from ${pcGamerSource.name} (PRIORITY SOURCE)...`);
+      console.log(`Fetching from ${pcGamerSource.name} (AUTHORITATIVE SOURCE)...`);
       const html = await fetchText(pcGamerSource.url);
       const codes = html.match(codeRegex) || [];
       
       console.log(`Found ${codes.length} codes from ${pcGamerSource.name}`);
       
       for (const code of codes) {
-        pcGamerCodes.add(code); // Track PC Gamer codes
-        
         // Check for special hardcoded codes
         if (SPECIAL_CODES[code]) {
           const special = SPECIAL_CODES[code];
-          allEntries.set(code, {
+          pcGamerCodes.set(code, {
             code,
             reward: special.reward,
             expires: special.expires,
-            source: special.source
+            source: special.source,
+            sites: ["PC Gamer (Special)"]
           });
           console.log(`  ${code}: ${special.reward} (SPECIAL HARDCODED)`);
         } else {
           const extractor = siteExtractors[pcGamerSource.type] || siteExtractors.table;
           const result = extractor(html, code);
           
-          allEntries.set(code, {
+          pcGamerCodes.set(code, {
             code,
             reward: result.reward,
             expires: result.expires,
-            source: pcGamerSource.url
+            source: pcGamerSource.url,
+            sites: ["PC Gamer"]
           });
           
           console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);
@@ -229,54 +209,81 @@ async function main() {
     }
   }
   
-  // Then process other sources (only add codes NOT found on PC Gamer)
-  for (const src of SOURCES) {
-    if (src.name === "PC Gamer") continue; // Already processed
-    
+  // Step 2: Process other sources for backup validation
+  const otherSources = SOURCES.filter(s => s.name !== "PC Gamer");
+  
+  for (const src of otherSources) {
     try {
-      console.log(`Fetching from ${src.name}...`);
+      console.log(`Fetching from ${src.name} for validation...`);
       const html = await fetchText(src.url);
       const codes = html.match(codeRegex) || [];
       
-      let newCodesFound = 0;
+      console.log(`Found ${codes.length} codes from ${src.name}`);
+      
       for (const code of codes) {
-        // Only add if NOT found on PC Gamer (PC Gamer is source of truth)
-        if (!pcGamerCodes.has(code) && !allEntries.has(code)) {
+        // Track codes from other sites
+        if (!otherSiteCodes.has(code)) {
           // Check for special hardcoded codes
           if (SPECIAL_CODES[code]) {
             const special = SPECIAL_CODES[code];
-            allEntries.set(code, {
+            otherSiteCodes.set(code, {
               code,
               reward: special.reward,
               expires: special.expires,
-              source: special.source
+              source: special.source,
+              sites: [src.name],
+              count: 1
             });
-            console.log(`  ${code}: ${special.reward} (SPECIAL HARDCODED)`);
           } else {
             const extractor = siteExtractors[src.type] || siteExtractors.table;
             const result = extractor(html, code);
             
-            allEntries.set(code, {
+            otherSiteCodes.set(code, {
               code,
               reward: result.reward,
               expires: result.expires,
-              source: src.url
+              source: src.url,
+              sites: [src.name],
+              count: 1
             });
-            
-            console.log(`  ${code}: ${result.reward} (NEW from ${src.name})`);
           }
-          newCodesFound++;
+        } else {
+          // Increment count and add site
+          const existing = otherSiteCodes.get(code);
+          existing.count++;
+          existing.sites.push(src.name);
         }
       }
-      console.log(`Found ${codes.length} total codes from ${src.name}, ${newCodesFound} new codes added`);
     } catch (err) {
       console.warn(`${src.name} failed:`, String(err));
     }
   }
+  
+  // Step 3: Combine results with validation logic
+  
+  // Add all PC Gamer codes (they are authoritative)
+  for (const [code, data] of pcGamerCodes) {
+    finalEntries.set(code, data);
+  }
+  
+  // Add codes from other sites ONLY if they appear on 2+ sites and NOT on PC Gamer
+  for (const [code, data] of otherSiteCodes) {
+    if (!pcGamerCodes.has(code) && data.count >= 2) {
+      finalEntries.set(code, data);
+      console.log(`  ${code}: VALIDATED by ${data.count} sites (${data.sites.join(', ')})`);
+    } else if (!pcGamerCodes.has(code)) {
+      console.log(`  ${code}: REJECTED - only found on 1 site (${data.sites[0]})`);
+    }
+  }
+
+  console.log(`\nFinal Results:`);
+  console.log(`- PC Gamer codes: ${pcGamerCodes.size}`);
+  console.log(`- Validated other codes: ${finalEntries.size - pcGamerCodes.size}`);
+  console.log(`- Total codes: ${finalEntries.size}`);
 
   const payload = {
     updated: new Date().toISOString(),
-    codes: Array.from(allEntries.values())
+    codes: Array.from(finalEntries.values())
       .sort((a, b) => {
         const ax = a.expires ? new Date(a.expires).getTime() : Infinity;
         const bx = b.expires ? new Date(b.expires).getTime() : Infinity;
@@ -286,7 +293,7 @@ async function main() {
 
   await fs.mkdir("docs", { recursive: true });
   await fs.writeFile("docs/codes.json", JSON.stringify(payload, null, 2), "utf-8");
-  console.log(`Wrote docs/codes.json with ${payload.codes.length} codes (PC Gamer: ${pcGamerCodes.size}, Others: ${payload.codes.length - pcGamerCodes.size})`);
+  console.log(`Wrote docs/codes.json with ${payload.codes.length} codes`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
