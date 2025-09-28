@@ -149,12 +149,15 @@ def index(request: Request):
         .header {{ background: #2d2d2d; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
         .status {{ display: flex; gap: 20px; margin: 10px 0; flex-wrap: wrap; }}
         .section {{ background: #2d2d2d; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
+        .guide-section {{ background: linear-gradient(135deg, #4CAF50, #45a049); padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }}
+        .guide-link {{ color: white; text-decoration: none; font-size: 18px; font-weight: bold; display: inline-flex; align-items: center; gap: 10px; }}
+        .guide-link:hover {{ text-decoration: underline; }}
+        .guide-description {{ margin-top: 10px; font-size: 14px; opacity: 0.9; }}
         table {{ width: 100%; border-collapse: collapse; }}
         th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #444; }}
         th {{ background: #3d3d3d; }}
         .code {{ font-family: monospace; background: #444; padding: 4px 8px; border-radius: 4px; }}
         .active {{ border-left: 4px solid #4CAF50; }}
-        .expired {{ border-left: 4px solid #f44336; opacity: 0.7; }}
         .refresh-btn {{ background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
         .refresh-btn:hover {{ background: #45a049; }}
         .refresh-btn:disabled {{ background: #666; cursor: not-allowed; }}
@@ -166,7 +169,10 @@ def index(request: Request):
         a {{ color: #64B5F6; }}
         .update-info {{ font-size: 14px; color: #aaa; margin-top: 10px; }}
         .code-actions {{ display: flex; gap: 8px; align-items: center; }}
-        @media (max-width: 768px) {{ .status {{ flex-direction: column; gap: 10px; }} }}
+        @media (max-width: 768px) {{ 
+            .status {{ flex-direction: column; gap: 10px; }} 
+            .guide-link {{ font-size: 16px; }}
+        }}
     </style>
 </head>
 <body>
@@ -175,10 +181,16 @@ def index(request: Request):
         <div class="status">
             <div><strong>Last Updated:</strong> {last_updated}</div>
             <div><strong>Active Codes:</strong> {len(codes['active'])}</div>
-            <div><strong>Expired Codes:</strong> {len(codes['expired'])}</div>
         </div>
         <button class="refresh-btn" onclick="updateCodes()">🔄 Force Update</button>
         <div class="update-info">Updates automatically every hour</div>
+    </div>
+
+    <div class="guide-section">
+        <a href="https://docs.google.com/spreadsheets/d/1bw4-jnEBbwCa3EnJ9cp8HW839ymgzbbHKIGRo9wgNyo/htmlview?usp=drivesdk" target="_blank" class="guide-link">
+            🗡️ Borderlands 4 Legendary Farming Guide
+        </a>
+        <div class="guide-description">Complete spreadsheet with legendary locations, drops, and farming tips</div>
     </div>
 
     <div class="section active">
@@ -217,43 +229,10 @@ def index(request: Request):
             </tr>
         """
     
-    if codes['expired']:
-        html += f"""
+    html += """
         </table>
     </div>
 
-    <div class="section expired">
-        <h2>🔴 Expired Codes ({len(codes['expired'])})</h2>
-        <table>
-            <tr><th>Code</th><th>Reward</th><th>Expired</th><th>Source</th></tr>
-"""
-        
-        for row in codes['expired']:
-            code = row['code']
-            expired = row.get('expires', '')
-            if expired:
-                try:
-                    exp_time = datetime.datetime.fromisoformat(expired.replace('Z', '+00:00'))
-                    expired_display = exp_time.strftime("%m/%d/%Y")
-                except:
-                    expired_display = expired
-            else:
-                expired_display = "Unknown"
-            
-            source_link = f"<a href='{row['source']}' target='_blank'>Source</a>" if row.get('source') else "—"
-            html += f"""
-                <tr>
-                    <td><span class="code">{code}</span></td>
-                    <td>{row.get('reward', '—')}</td>
-                    <td>{expired_display}</td>
-                    <td>{source_link}</td>
-                </tr>
-            """
-    else:
-        html += """</table>
-    </div>"""
-    
-    html += """
     <script>
         // Load redeemed codes from localStorage
         function loadRedeemedCodes() {
