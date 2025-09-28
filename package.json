@@ -1,0 +1,11 @@
+{
+  "name": "bl4-shift-codes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/fetch-codes.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
