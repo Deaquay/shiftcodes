@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-RAW_JSON_URL = "https://raw.githubusercontent.com/xGrim81/bl4-shift-codes/refs/heads/main/docs/codes.json"
+RAW_JSON_URL = "https://raw.githubusercontent.com/Deaquay/shiftcodes/refs/heads/main/docs/codes.json"
 
 def fetch_codes():
     try:
@@ -71,10 +71,33 @@ def index(request: Request):
           display: inline-block;
           /* Optional: tweak padding, font-size for your design */
         }
+        .community-link {
+          background: #28202d;
+          padding: 1em;
+          border-radius: 8px;
+          margin: 1em 0;
+          border: 1px solid #444;
+        }
+        .community-link a {
+          color: #5cb3ff;
+          text-decoration: none;
+          font-weight: bold;
+        }
+        .community-link a:hover {
+          text-decoration: underline;
+        }
       </style>
     </head>
     <body>
       <h2>Borderlands 4 SHiFT Codes</h2>
+      
+      <div class="community-link">
+        📊 <strong>Community Spreadsheet:</strong> Check out the comprehensive 
+        <a href="https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2F1bw4-jnEBbwCa3EnJ9cp8HW839ymgzbbHKIGRo9wgNyo%2Fhtmlview%3Fusp%3Ddrivesdk" target="_blank">
+          Borderlands 4 SHiFT Codes Community Spreadsheet
+        </a> for additional codes and community insights!
+      </div>
+      
       <h3>Active & Permanent Codes</h3>
       <p>Check off codes you've redeemed (saved locally on this device).</p>
       <table id="activeTable">
