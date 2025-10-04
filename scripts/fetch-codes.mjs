@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 
 const SOURCES = [
   { url: "https://www.pcgamer.com/games/fps/borderlands-4-shift-codes/", name: "PC Gamer", type: "table", priority: 1 },
+  { url: "https://www.ign.com/wikis/borderlands-4/Borderlands_4_SHiFT_Codes", name: "IGN", type: "ign", priority: 1 },
   { url: "https://www.gamesradar.com/games/borderlands/borderlands-4-shift-codes-golden-keys/", name: "GamesRadar", type: "gamesradar", priority: 2 },
   { url: "https://mentalmars.com/game-news/borderlands-4-shift-codes/", name: "MentalMars", type: "table", priority: 2 },
   { url: "https://www.pcgamesn.com/borderlands-4/shift-codes", name: "PCGamesN", type: "pcgamesn", priority: 2 },
@@ -42,6 +43,96 @@ function isCodeExpired(expirationDate) {
 
 // Site-specific extraction functions
 const siteExtractors = {
+  ign: (html, code) => {
+    // IGN uses a structured table with precise datetime formats
+    const codeIndex = html.indexOf(code);
+    const windowSize = 2000;
+    const start = Math.max(0, codeIndex - windowSize);
+    const end = Math.min(html.length, codeIndex + windowSize);
+    const window = html.slice(start, end);
+    
+    // Extract reward information
+    let reward = "1x Golden Key";
+    
+    // Look for various reward patterns specific to IGN
+    const rewardPatterns = [
+      /Rewards?\s*[:=]?\s*([^\|\n\r<]+?)(?:\s*\||Code Expiration|$)/gi,
+      /(Break Free[^\|\n\r<]*)/gi,
+      /(Butterfinger[^\|\n\r<]*)/gi,
+      /(Rafa Savings[^\|\n\r<]*)/gi,
+      /(\d+\s*Golden Keys?)/gi,
+      /(Golden Key)/gi,
+    ];
+    
+    for (const pattern of rewardPatterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(window);
+      if (match && match[1]) {
+        reward = match[1].trim().replace(/^[:=]\s*/, '').replace(/\s*\|.*$/, '');
+        // Clean up common IGN formatting
+        reward = reward.replace(/^■\s*/, '').replace(/\*\s*■\s*/, '').trim();
+        if (reward && reward.length > 0) {
+          break;
+        }
+      }
+    }
+    
+    // Extract expiration information - IGN has very precise formats
+    let expires = null;
+    let hasValidDate = false;
+    
+    // IGN patterns: "October 1, 2025 at 4:00am - October 3, 2025 at 4:00am (Event ended)"
+    // "September 29, 2025 at 8:00pm - December 31, 2030 at 8:00pm (Live)"
+    const ignDatePatterns = [
+      // Full datetime range with status
+      /(\w+\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}[ap]m)\s*-\s*(\w+\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}[ap]m)\s*\(([^)]+)\)/gi,
+      // Single expiration date
+      /Code Expiration[^:]*:?\s*([^(\n\r]+)\s*\(/gi,
+      // No expiration indicator
+      /No expiration/gi
+    ];
+    
+    for (const pattern of ignDatePatterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(window);
+      if (match) {
+        if (match[0].includes('No expiration')) {
+          expires = null;
+          hasValidDate = true;
+          break;
+        }
+        
+        if (match[3]) {
+          // Full range with status
+          const status = match[3].toLowerCase();
+          const endDate = match[2];
+          
+          if (status.includes('event ended')) {
+            // Code is explicitly marked as ended - skip it
+            console.log(`  ${code}: IGN marks as 'Event ended' - will be skipped`);
+            return { reward, expires: new Date('2000-01-01').toISOString(), raw: match[0], hasValidDate: true, ignStatus: 'ended' };
+          } else if (status.includes('live')) {
+            // Code is live, use end date
+            expires = parseIgnDate(endDate);
+            hasValidDate = true;
+          } else {
+            // Use end date from range
+            expires = parseIgnDate(endDate);
+            hasValidDate = true;
+          }
+        } else if (match[1]) {
+          // Single date
+          expires = parseIgnDate(match[1]);
+          hasValidDate = true;
+        }
+        
+        if (expires || hasValidDate) break;
+      }
+    }
+    
+    return { reward, expires, raw: window.substring(0, 200), hasValidDate, ignStatus: expires ? 'active' : 'permanent' };
+  },
+
   gamesradar: (html, code) => {
     const lines = html.split(/[\r\n]+/);
     for (const line of lines) {
@@ -137,6 +228,32 @@ const siteExtractors = {
   }
 };
 
+function parseIgnDate(dateStr) {
+  if (!dateStr) return null;
+  
+  // Handle permanent/long-term indicators
+  if (/Dec(?:ember)?\s+31,?\s+2030/i.test(dateStr)) {
+    return "2030-12-31T23:59:59.999Z";
+  }
+  
+  try {
+    // IGN format: "October 3, 2025 at 4:00am"
+    let cleanDate = dateStr.trim();
+    
+    // Convert "at 4:00am" to "4:00 AM"
+    cleanDate = cleanDate.replace(/\s+at\s+(\d{1,2}:\d{2})(am|pm)/gi, ' $1 $2');
+    
+    const parsed = new Date(cleanDate);
+    if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 2020 && parsed.getFullYear() < 2040) {
+      return parsed.toISOString();
+    }
+  } catch (e) {
+    console.warn(`Failed to parse IGN date: ${dateStr}`);
+  }
+  
+  return null;
+}
+
 function parseGamesRadarDate(dateStr) {
   if (!dateStr) return null;
   const currentYear = new Date().getFullYear();
@@ -194,39 +311,46 @@ async function fetchText(url) {
 }
 
 async function main() {
-  const pcGamerCodes = new Map();
+  const trustedCodes = new Map(); // PC Gamer + IGN (priority 1)
   const otherSiteCodes = new Map();
   const finalEntries = new Map();
   
-  // Step 1: Process PC Gamer (authoritative source)
-  const pcGamerSource = SOURCES.find(s => s.name === "PC Gamer");
-  if (pcGamerSource) {
+  // Step 1: Process trusted sources (PC Gamer + IGN)
+  const trustedSources = SOURCES.filter(s => s.priority === 1);
+  
+  for (const source of trustedSources) {
     try {
-      console.log(`Fetching from ${pcGamerSource.name} (AUTHORITATIVE SOURCE)...`);
-      const html = await fetchText(pcGamerSource.url);
+      console.log(`Fetching from ${source.name} (TRUSTED SOURCE)...`);
+      const html = await fetchText(source.url);
       const codes = html.match(codeRegex) || [];
       
-      console.log(`Found ${codes.length} codes from ${pcGamerSource.name}`);
+      console.log(`Found ${codes.length} codes from ${source.name}`);
       
       for (const code of codes) {
         // Handle special hardcoded codes (they bypass normal rules)
         if (SPECIAL_CODES[code]) {
           const special = SPECIAL_CODES[code];
-          pcGamerCodes.set(code, {
+          trustedCodes.set(code, {
             code,
             reward: special.reward,
             expires: special.expires,
             source: special.source,
-            sites: ["PC Gamer (Special)"]
+            sites: [`${source.name} (Special)`]
           });
           console.log(`  ${code}: ${special.reward} (SPECIAL - BYPASSES RULES)`);
         } else {
-          const extractor = siteExtractors[pcGamerSource.type] || siteExtractors.table;
+          const extractor = siteExtractors[source.type] || siteExtractors.table;
           const result = extractor(html, code);
           
-          // STRICT: PC Gamer codes need valid dates OR be permanent
+          // Skip codes that IGN explicitly marks as ended
+          if (result.ignStatus === 'ended') {
+            console.log(`  ${code}: SKIPPED - IGN marks as ended`);
+            continue;
+          }
+          
+          // STRICT: Trusted sources need valid dates OR be permanent
           if (!result.expires && !result.hasValidDate && !isKnownPermanent(code)) {
-            console.log(`  ${code}: REJECTED - No valid expiration date found on PC Gamer`);
+            console.log(`  ${code}: REJECTED - No valid expiration date found on ${source.name}`);
             continue;
           }
           
@@ -236,24 +360,31 @@ async function main() {
             continue;
           }
           
-          pcGamerCodes.set(code, {
-            code,
-            reward: result.reward,
-            expires: result.expires,
-            source: pcGamerSource.url,
-            sites: ["PC Gamer"]
-          });
-          
-          console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);
+          // If code already exists from another trusted source, merge info
+          if (trustedCodes.has(code)) {
+            const existing = trustedCodes.get(code);
+            existing.sites.push(source.name);
+            console.log(`  ${code}: CONFIRMED by ${source.name} (also on ${existing.sites.filter(s => s !== source.name).join(', ')})`);
+          } else {
+            trustedCodes.set(code, {
+              code,
+              reward: result.reward,
+              expires: result.expires,
+              source: source.url,
+              sites: [source.name]
+            });
+            
+            console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);
+          }
         }
       }
     } catch (err) {
-      console.warn("PC Gamer failed:", String(err));
+      console.warn(`${source.name} failed:`, String(err));
     }
   }
   
   // Step 2: Process other sources - MUCH STRICTER
-  const otherSources = SOURCES.filter(s => s.name !== "PC Gamer");
+  const otherSources = SOURCES.filter(s => s.priority !== 1);
   
   for (const src of otherSources) {
     try {
@@ -264,9 +395,9 @@ async function main() {
       console.log(`Found ${codes.length} codes from ${src.name}`);
       
       for (const code of codes) {
-        // SKIP if PC Gamer already processed this code (PC Gamer is truth)
-        if (pcGamerCodes.has(code)) {
-          console.log(`  ${code}: SKIPPED - PC Gamer already handled this code`);
+        // SKIP if trusted sources already processed this code
+        if (trustedCodes.has(code)) {
+          console.log(`  ${code}: SKIPPED - Trusted source already handled this code`);
           continue;
         }
         
@@ -324,14 +455,14 @@ async function main() {
     }
   }
   
-  // Step 3: Final validation - PC Gamer codes + strictly validated others
+  // Step 3: Final validation - Trusted codes + strictly validated others
   
-  // Add all PC Gamer codes (authoritative)
-  for (const [code, data] of pcGamerCodes) {
+  // Add all trusted codes (PC Gamer + IGN)
+  for (const [code, data] of trustedCodes) {
     finalEntries.set(code, data);
   }
   
-  // Add other codes ONLY if 2+ sites AND not conflicting with PC Gamer decisions
+  // Add other codes ONLY if 2+ sites AND not conflicting with trusted sources
   for (const [code, data] of otherSiteCodes) {
     if (data.count >= 2) {
       finalEntries.set(code, data);
@@ -342,8 +473,8 @@ async function main() {
   }
 
   console.log(`\nFinal Results:`);
-  console.log(`- PC Gamer active codes: ${pcGamerCodes.size}`);
-  console.log(`- Validated other active codes: ${finalEntries.size - pcGamerCodes.size}`);
+  console.log(`- Trusted source codes (PC Gamer + IGN): ${trustedCodes.size}`);
+  console.log(`- Validated other active codes: ${finalEntries.size - trustedCodes.size}`);
   console.log(`- Total active codes: ${finalEntries.size}`);
 
   const payload = {
