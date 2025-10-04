@@ -345,7 +345,8 @@ async function main() {
           if (trustedCodes.has(code)) {
             const existing = trustedCodes.get(code);
             existing.sites.push(source.name);
-            console.log(`  ${code}: CONFIRMED by ${source.name} (also on ${existing.sites.filter(s => s !== source.name).join(', ')})`);\n          } else {
+            console.log(`  ${code}: CONFIRMED by ${source.name} (also on ${existing.sites.filter(s => s !== source.name).join(', ')})`);
+          } else {
             trustedCodes.set(code, {
               code,
               reward: result.reward,
@@ -354,7 +355,8 @@ async function main() {
               sites: [source.name]
             });
             
-            console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);\n          }
+            console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);
+          }
         }
       }
     } catch (err) {
