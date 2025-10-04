@@ -16,8 +16,8 @@ const codeRegex = /\b[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}
 const SPECIAL_CODES = {
   "JS63J-JSCWJ-CFTBW-3TJ3J-WJS5R": {
     reward: "Break Free Cosmetic Pack",
-    expires: "2030-12-31T23:59:00-06:00",
-    source: "https://www.pcgamer.com/games/fps/borderlands-4-shift-codes/"
+    expires: "2031-01-01T08:49:00Z",
+    source: "https://www.ign.com/wikis/borderlands-4/Borderlands_4_SHiFT_Codes"
   },
   // Known permanent codes
   "T9RJB-BFKRR-3RBTW-B33TB-KCZB9": {
@@ -41,96 +41,103 @@ function isCodeExpired(expirationDate) {
   return expireDate <= now;
 }
 
+function parseIgnDate(dateStr) {
+  if (!dateStr) return null;
+  
+  try {
+    // Convert "December 31, 2030 at 8:00pm" to Date object
+    const cleanDate = dateStr.replace(' at ', ' ');
+    
+    // Handle am/pm conversion
+    const finalDate = cleanDate.replace(/(\d{1,2}):(\d{2})([ap]m)/i, (match, hour, min, ampm) => {
+      let h = parseInt(hour);
+      if (ampm.toLowerCase() === 'pm' && h !== 12) h += 12;
+      if (ampm.toLowerCase() === 'am' && h === 12) h = 0;
+      return `${h.toString().padStart(2, '0')}:${min}`;
+    });
+    
+    return new Date(finalDate);
+  } catch (e) {
+    console.warn(`Failed to parse IGN date: ${dateStr}`);
+    return null;
+  }
+}
+
+function extractSimpleReward(line) {
+  // Extract reward from IGN line format
+  const rewardPatterns = [
+    /Rewards?\s*[:=]\s*([^|]+?)(?:\s*\||Code Expiration|$)/i,
+    /■\s*Rewards?\s*[:=]\s*([^|]+?)(?:\s*\||Code Expiration|$)/i,
+  ];
+  
+  for (const pattern of rewardPatterns) {
+    const match = line.match(pattern);
+    if (match && match[1]) {
+      let reward = match[1].trim();
+      // Clean up common formatting
+      reward = reward.replace(/^[:=■\s]*/, '').replace(/\s*\*.*$/, '').trim();
+      if (reward && reward.length > 3) {
+        return reward;
+      }
+    }
+  }
+  
+  return "1x Golden Key"; // default
+}
+
 // Site-specific extraction functions
 const siteExtractors = {
   ign: (html, code) => {
-    // IGN uses a structured table with precise datetime formats
-    const codeIndex = html.indexOf(code);
-    const windowSize = 2000;
-    const start = Math.max(0, codeIndex - windowSize);
-    const end = Math.min(html.length, codeIndex + windowSize);
-    const window = html.slice(start, end);
+    // IGN strict parser: only accept codes with exact date range format in same line
+    console.log(`    IGN: Processing ${code}`);
     
-    // Extract reward information
-    let reward = "1x Golden Key";
+    const lines = html.split('\n');
+    const dateRangeRegex = /(\w+ \d{1,2}, \d{4} at \d{1,2}:\d{2}[ap]m)\s*-\s*(\w+ \d{1,2}, \d{4} at \d{1,2}:\d{2}[ap]m)/;
     
-    // Look for various reward patterns specific to IGN
-    const rewardPatterns = [
-      /Rewards?\s*[:=]?\s*([^\|\n\r<]+?)(?:\s*\||Code Expiration|$)/gi,
-      /(Break Free[^\|\n\r<]*)/gi,
-      /(Butterfinger[^\|\n\r<]*)/gi,
-      /(Rafa Savings[^\|\n\r<]*)/gi,
-      /(\d+\s*Golden Keys?)/gi,
-      /(Golden Key)/gi,
-    ];
-    
-    for (const pattern of rewardPatterns) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(window);
-      if (match && match[1]) {
-        reward = match[1].trim().replace(/^[:=]\s*/, '').replace(/\s*\|.*$/, '');
-        // Clean up common IGN formatting
-        reward = reward.replace(/^■\s*/, '').replace(/\*\s*■\s*/, '').trim();
-        if (reward && reward.length > 0) {
-          break;
-        }
-      }
-    }
-    
-    // Extract expiration information - IGN has very precise formats
-    let expires = null;
-    let hasValidDate = false;
-    
-    // IGN patterns: "October 1, 2025 at 4:00am - October 3, 2025 at 4:00am (Event ended)"
-    // "September 29, 2025 at 8:00pm - December 31, 2030 at 8:00pm (Live)"
-    const ignDatePatterns = [
-      // Full datetime range with status
-      /(\w+\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}[ap]m)\s*-\s*(\w+\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}:\d{2}[ap]m)\s*\(([^)]+)\)/gi,
-      // Single expiration date
-      /Code Expiration[^:]*:?\s*([^(\n\r]+)\s*\(/gi,
-      // No expiration indicator
-      /No expiration/gi
-    ];
-    
-    for (const pattern of ignDatePatterns) {
-      pattern.lastIndex = 0;
-      const match = pattern.exec(window);
-      if (match) {
-        if (match[0].includes('No expiration')) {
-          expires = null;
-          hasValidDate = true;
-          break;
-        }
+    for (const line of lines) {
+      if (line.includes(code)) {
+        console.log(`    IGN: Found ${code} in line: ${line.substring(0, 100)}...`);
         
-        if (match[3]) {
-          // Full range with status
-          const status = match[3].toLowerCase();
-          const endDate = match[2];
+        // Check if this line has the required date range format
+        const dateMatch = line.match(dateRangeRegex);
+        
+        if (dateMatch) {
+          const startDateStr = dateMatch[1];
+          const endDateStr = dateMatch[2];
           
-          if (status.includes('event ended')) {
-            // Code is explicitly marked as ended - skip it
-            console.log(`  ${code}: IGN marks as 'Event ended' - will be skipped`);
-            return { reward, expires: new Date('2000-01-01').toISOString(), raw: match[0], hasValidDate: true, ignStatus: 'ended' };
-          } else if (status.includes('live')) {
-            // Code is live, use end date
-            expires = parseIgnDate(endDate);
-            hasValidDate = true;
-          } else {
-            // Use end date from range
-            expires = parseIgnDate(endDate);
-            hasValidDate = true;
+          console.log(`    IGN: Found date range: ${startDateStr} - ${endDateStr}`);
+          
+          const endDate = parseIgnDate(endDateStr);
+          if (!endDate) {
+            console.log(`    IGN: Failed to parse end date for ${code}`);
+            return { reward: "1x Golden Key", expires: null, raw: "", hasValidDate: false };
           }
-        } else if (match[1]) {
-          // Single date
-          expires = parseIgnDate(match[1]);
-          hasValidDate = true;
+          
+          // Check if expired
+          const now = new Date();
+          if (endDate <= now) {
+            console.log(`    IGN: Code ${code} is expired (${endDate} <= ${now})`);
+            return { reward: "1x Golden Key", expires: endDate.toISOString(), raw: "", hasValidDate: true, expired: true };
+          }
+          
+          const reward = extractSimpleReward(line);
+          console.log(`    IGN: Active code ${code}: ${reward} (expires ${endDate})`);
+          
+          return { 
+            reward, 
+            expires: endDate.toISOString(), 
+            raw: `${startDateStr} - ${endDateStr}`, 
+            hasValidDate: true 
+          };
+        } else {
+          console.log(`    IGN: No valid date range found for ${code} - discarded`);
+          return { reward: "1x Golden Key", expires: null, raw: "", hasValidDate: false };
         }
-        
-        if (expires || hasValidDate) break;
       }
     }
     
-    return { reward, expires, raw: window.substring(0, 200), hasValidDate, ignStatus: expires ? 'active' : 'permanent' };
+    console.log(`    IGN: Code ${code} not found in any line`);
+    return { reward: "1x Golden Key", expires: null, raw: "", hasValidDate: false };
   },
 
   gamesradar: (html, code) => {
@@ -228,32 +235,6 @@ const siteExtractors = {
   }
 };
 
-function parseIgnDate(dateStr) {
-  if (!dateStr) return null;
-  
-  // Handle permanent/long-term indicators
-  if (/Dec(?:ember)?\s+31,?\s+2030/i.test(dateStr)) {
-    return "2030-12-31T23:59:59.999Z";
-  }
-  
-  try {
-    // IGN format: "October 3, 2025 at 4:00am"
-    let cleanDate = dateStr.trim();
-    
-    // Convert "at 4:00am" to "4:00 AM"
-    cleanDate = cleanDate.replace(/\s+at\s+(\d{1,2}:\d{2})(am|pm)/gi, ' $1 $2');
-    
-    const parsed = new Date(cleanDate);
-    if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 2020 && parsed.getFullYear() < 2040) {
-      return parsed.toISOString();
-    }
-  } catch (e) {
-    console.warn(`Failed to parse IGN date: ${dateStr}`);
-  }
-  
-  return null;
-}
-
 function parseGamesRadarDate(dateStr) {
   if (!dateStr) return null;
   const currentYear = new Date().getFullYear();
@@ -342,9 +323,9 @@ async function main() {
           const extractor = siteExtractors[source.type] || siteExtractors.table;
           const result = extractor(html, code);
           
-          // Skip codes that IGN explicitly marks as ended
-          if (result.ignStatus === 'ended') {
-            console.log(`  ${code}: SKIPPED - IGN marks as ended`);
+          // Skip codes that are explicitly expired
+          if (result.expired) {
+            console.log(`  ${code}: EXPIRED - SKIPPING`);
             continue;
           }
           
@@ -364,8 +345,7 @@ async function main() {
           if (trustedCodes.has(code)) {
             const existing = trustedCodes.get(code);
             existing.sites.push(source.name);
-            console.log(`  ${code}: CONFIRMED by ${source.name} (also on ${existing.sites.filter(s => s !== source.name).join(', ')})`);
-          } else {
+            console.log(`  ${code}: CONFIRMED by ${source.name} (also on ${existing.sites.filter(s => s !== source.name).join(', ')})`);\n          } else {
             trustedCodes.set(code, {
               code,
               reward: result.reward,
@@ -374,8 +354,7 @@ async function main() {
               sites: [source.name]
             });
             
-            console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);
-          }
+            console.log(`  ${code}: ${result.reward} (expires: ${result.expires ? new Date(result.expires).toLocaleDateString() : 'Never'})`);\n          }
         }
       }
     } catch (err) {
